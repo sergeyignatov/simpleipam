@@ -24,7 +24,7 @@ type Subnets struct {
 
 func checkHostAlive(ip string) bool {
 	p := fastping.NewPinger()
-	p.Network("udp")
+	//p.Network("udp")
 	p.AddIPAddr(&net.IPAddr{net.ParseIP(ip), ""})
 	resp := make(chan bool)
 	p.OnRecv = func(addr *net.IPAddr, t time.Duration) {
@@ -37,7 +37,7 @@ func checkHostAlive(ip string) bool {
 	p.MaxRTT = 100 * time.Millisecond
 	p.RunLoop()
 	t := <-resp
-	//fmt.Printf("ping %s\n", ip)
+	p.Stop()
 	return t
 }
 func (ss *Subnets) Load(cfg *icfg.Config) error {
@@ -81,6 +81,7 @@ func NewSubnet(cidr string, c icfg.Subnet) *Subnet {
 	s.inuse_ip = make(map[common.IPAddr]*common.Client)
 	s.inuse_mac = make(map[common.HardwareAddr]*common.Client)
 	s.inuse_fqdn = make(map[string]common.HardwareAddr)
+	s.tmp = make(map[string]int)
 	s.datadir = path.Join(config.DataDir, strings.Replace(cidr, "/", "_", 1))
 	if _, err := os.Stat(s.datadir); err != nil {
 		os.Mkdir(s.datadir, 0755)
@@ -112,6 +113,7 @@ type Subnet struct {
 	inuse_mac  map[common.HardwareAddr]*common.Client
 	inuse_ip   map[common.IPAddr]*common.Client
 	inuse_fqdn map[string]common.HardwareAddr
+	tmp        map[string]int
 
 	sync.RWMutex
 }
@@ -135,6 +137,7 @@ func (s *Subnet) delete(cl *common.Client) error {
 	delete(s.inuse_ip, common.IPAddr(cl.Ip))
 	delete(s.inuse_fqdn, cl.Hostname)
 	delete(s.inuse_mac, common.HardwareAddr(cl.Mac))
+	delete(s.tmp, cl.Ip)
 	return nil
 }
 func (s *Subnets) getSubnet(subnet string) (*Subnet, error) {
@@ -169,6 +172,11 @@ func (s *Subnet) setIP(mac common.HardwareAddr, ip, fqdn string) (*common.Respon
 	return &common.Response{ip, s.gateway.String(), fqdn, string(mac), s.cidr}, nil
 
 }
+func (s *Subnet) addtmp(ip string) {
+	s.Lock()
+	defer s.Unlock()
+	s.tmp[ip] = 1
+}
 func (s *Subnet) getIP(mac common.HardwareAddr, fqdn string) (*common.Response, error) {
 	if c, ok := s.inuse_mac[mac]; ok {
 		return &common.Response{c.Ip, s.gateway.String(), fqdn, string(mac), s.cidr}, nil
@@ -189,12 +197,19 @@ func (s *Subnet) getIP(mac common.HardwareAddr, fqdn string) (*common.Response, 
 			if ip.String() == s.end.String() {
 				return nil, fmt.Errorf("No more ip to use")
 			}
-			cl := common.Client{Ip: ip.String(), Mac: string(mac), Hostname: fqdn, CreateTime: time.Now().Unix()}
-			if err := s.AddSave(&cl); err != nil {
-				return nil, err
-			}
+			if _, kk := s.tmp[ip.String()]; !kk {
+				if checkHostAlive(ip.String()) {
+					s.addtmp(ip.String())
+					fmt.Printf("%s is using\n", ip.String())
+					continue
+				}
+				cl := common.Client{Ip: ip.String(), Mac: string(mac), Hostname: fqdn, CreateTime: time.Now().Unix()}
+				if err := s.AddSave(&cl); err != nil {
+					return nil, err
+				}
 
-			return &common.Response{ip.String(), s.gateway.String(), fqdn, string(mac), s.cidr}, nil
+				return &common.Response{ip.String(), s.gateway.String(), fqdn, string(mac), s.cidr}, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("unable get ip")
