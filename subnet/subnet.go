@@ -5,8 +5,9 @@ import (
 	"github.com/sergeyignatov/simpleipam/common"
 	icfg "github.com/sergeyignatov/simpleipam/config"
 	"github.com/tatsushid/go-fastping"
+
 	"io/ioutil"
-	"math/rand"
+	"log"
 	"net"
 	"os"
 	"path"
@@ -16,9 +17,11 @@ import (
 )
 
 var config *icfg.Config
+var logger *log.Logger
 
 type Subnets struct {
 	subnets map[string]*Subnet
+	//logger  *log.Logger
 	sync.RWMutex
 }
 
@@ -40,8 +43,9 @@ func checkHostAlive(ip string) bool {
 	p.Stop()
 	return t
 }
-func (ss *Subnets) Load(cfg *icfg.Config) error {
+func (ss *Subnets) Load(cfg *icfg.Config, logg *log.Logger) error {
 	config = cfg
+	logger = logg
 	for k, v := range cfg.Subnets {
 		s := NewSubnet(k, v)
 		ss.Add(s)
@@ -50,7 +54,7 @@ func (ss *Subnets) Load(cfg *icfg.Config) error {
 }
 func NewSubnets() *Subnets {
 	s := Subnets{}
-	rand.Seed(time.Now().Unix())
+	//rand.Seed(time.Now().Unix())
 	s.subnets = make(map[string]*Subnet)
 	return &s
 }
@@ -114,7 +118,6 @@ type Subnet struct {
 	inuse_ip   map[common.IPAddr]*common.Client
 	inuse_fqdn map[string]common.HardwareAddr
 	tmp        map[string]int
-
 	sync.RWMutex
 }
 
@@ -146,6 +149,20 @@ func (s *Subnets) getSubnet(subnet string) (*Subnet, error) {
 	}
 	return nil, fmt.Errorf("unable find subnet")
 }
+
+func (s *Subnets) getSubnetByIp(ip net.IP) (*Subnet, error) {
+	for k, v := range s.subnets {
+		_, nt, err := net.ParseCIDR(k)
+		if err != nil {
+			return nil, err
+		}
+		if nt.Contains(ip) {
+			return v, nil
+		}
+	}
+	return nil, fmt.Errorf("unable find subnet by ip")
+}
+
 func (s *Subnet) releaseIP(mac common.HardwareAddr, ip, fqdn string) error {
 	if c, ok := s.inuse_mac[mac]; ok {
 		if c.Ip == ip {
@@ -162,6 +179,7 @@ func (s *Subnet) releaseIP(mac common.HardwareAddr, ip, fqdn string) error {
 	return fmt.Errorf("unable find leases")
 }
 func (s *Subnet) setIP(mac common.HardwareAddr, ip, fqdn string) (*common.Response, error) {
+	logger.Println("commit ", string(mac), ip, fqdn)
 	if c, ok := s.inuse_mac[mac]; ok {
 		c.Ip = ip
 	}
@@ -178,12 +196,15 @@ func (s *Subnet) addtmp(ip string) {
 	s.tmp[ip] = 1
 }
 func (s *Subnet) getIP(mac common.HardwareAddr, fqdn string) (*common.Response, error) {
+
 	if c, ok := s.inuse_mac[mac]; ok {
+		logger.Println("commit ", string(mac), c.Ip, fqdn)
 		return &common.Response{c.Ip, s.gateway.String(), fqdn, string(mac), s.cidr}, nil
 	}
 	if m, ok := s.inuse_fqdn[fqdn]; ok {
 		if c, ok := s.inuse_mac[m]; ok {
 			if !checkHostAlive(c.Ip) {
+				logger.Println("commit ", string(m), c.Ip, fqdn)
 				return &common.Response{c.Ip, s.gateway.String(), fqdn, string(m), s.cidr}, nil
 			}
 		}
@@ -200,14 +221,14 @@ func (s *Subnet) getIP(mac common.HardwareAddr, fqdn string) (*common.Response, 
 			if _, kk := s.tmp[ip.String()]; !kk {
 				if checkHostAlive(ip.String()) {
 					s.addtmp(ip.String())
-					fmt.Printf("%s is using\n", ip.String())
+					logger.Printf("%s is taken\n", ip.String())
 					continue
 				}
 				cl := common.Client{Ip: ip.String(), Mac: string(mac), Hostname: fqdn, CreateTime: time.Now().Unix()}
 				if err := s.AddSave(&cl); err != nil {
 					return nil, err
 				}
-
+				logger.Println("commit ", string(mac), ip.String(), fqdn)
 				return &common.Response{ip.String(), s.gateway.String(), fqdn, string(mac), s.cidr}, nil
 			}
 		}
@@ -228,30 +249,37 @@ func (ss *Subnets) macinuse(mac common.HardwareAddr) bool {
 	}
 	return false
 }
+
 func (s *Subnets) generatemac() (string, error) {
 
-	buf := make([]byte, 6)
-	_, err := rand.Read(buf)
-	if err != nil {
-		return "", err
-	}
-	buf[0] |= 2
-	mac := fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5])
+	mac := common.Generatemac()
 	if s.macinuse(common.HardwareAddr(mac)) {
 		return s.generatemac()
 	}
 	return mac, nil
 }
 func (s *Subnets) ReleaseIP(subnet, mac, ip, fqdn string) error {
+	logger.Println("release", string(mac), ip, fqdn)
 	if _, err := net.ParseMAC(mac); err != nil {
 		return err
 	}
-	if _, nt, err := net.ParseCIDR(subnet); err != nil {
-		return err
-	} else {
-		if !nt.Contains(net.ParseIP(ip)) {
-			return fmt.Errorf("ip is not belong to subnet")
+	if ip == "" {
+		return fmt.Errorf("missing ip parameter")
+	}
+	if subnet != "" {
+		if _, nt, err := net.ParseCIDR(subnet); err != nil {
+			return err
+		} else {
+			if !nt.Contains(net.ParseIP(ip)) {
+				return fmt.Errorf("ip is not belong to subnet")
+			}
 		}
+	} else {
+		sn, err := s.getSubnetByIp(net.ParseIP(ip))
+		if err != nil {
+			return err
+		}
+		return sn.releaseIP(common.HardwareAddr(strings.ToLower(mac)), ip, fqdn)
 	}
 
 	sn, err := s.getSubnet(subnet)

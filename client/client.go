@@ -68,7 +68,6 @@ func (c *ApiClient) ReleaseIP(args interface{}) (*common.ApiResponseInt, error) 
 func (c *ApiClient) post(base string, args interface{}) ([]byte, error) {
 	uri := c.url("api", common.ApiVersion, base)
 	val := url.Values{}
-	fmt.Printf("%T, %+v\n", args, args)
 	rr := make(map[string]string)
 
 	switch args := args.(type) {
@@ -97,12 +96,7 @@ func (c *ApiClient) post(base string, args interface{}) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf(string(body))
 	}
-	//var v common.ApiResponse2
-	fmt.Println(string(body))
-	/*err = json.Unmarshal(body, &v)
-	if err != nil {
-		return nil, err
-	}*/
+
 	return body, nil
 
 }

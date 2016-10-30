@@ -1,5 +1,14 @@
 package common
 
+import (
+	"bytes"
+
+	"fmt"
+
+	mrand "math/rand"
+	"time"
+)
+
 type HardwareAddr string
 type IPAddr string
 
@@ -33,4 +42,20 @@ func NewApiResponse(r interface{}) *ApiResponseInt {
 		return &ApiResponseInt{Status: "error", Resp: t.Error()}
 	}
 	return &ApiResponseInt{Status: "ok", Resp: r}
+}
+
+func Generatemac() string {
+	mrand.Seed(time.Now().UnixNano())
+	buf := bytes.Buffer{}
+	mask := "00:xx:xx:xx:xx:xx"
+	for _, c := range mask {
+		if c == 'x' {
+			s := mrand.Intn(16)
+
+			buf.WriteString(fmt.Sprintf("%x", s))
+		} else {
+			buf.WriteString(string(c))
+		}
+	}
+	return buf.String()
 }

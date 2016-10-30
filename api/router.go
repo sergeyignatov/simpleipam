@@ -17,7 +17,9 @@ func Fail(c *gin.Context, err error) {
 }
 
 func Router(c *ctx.Context) http.Handler {
-	router := gin.Default()
+	gin.SetMode(gin.ReleaseMode)
+	router := gin.New()
+
 	context = c
 	router.Use(gin.ErrorLogger())
 	//index := router.Group("/")
@@ -28,37 +30,6 @@ func Router(c *ctx.Context) http.Handler {
 		root.POST("/getip", apiGetIP)
 		root.POST("/release", apiReleaseIP)
 	}
-	/*{
-		root.GET("/containers", apiContainersList)
-		root.POST("/containers", apiContainerCreate)
-		root.GET("/containers/:name", apiContainersShow)
-		root.POST("/containers/:name", apiContainersEdit)
 
-		root.DELETE("/containers/:name", apiContainersDelete)
-		root.POST("/containers/:name/start", apiContainersStart)
-		root.POST("/containers/:name/stop", apiContainersStop)
-	}
-	{
-		root.GET("/servers", apiServersList)
-		root.POST("/servers/:name/maint", apiServersMaintenance)
-	}
-	{
-		root.GET("/profiles", apiProfilesList)
-		root.GET("/profiles/:name", apiProfilesShow)
-		root.POST("/profiles/:name", apiProfilesEdit)
-		root.DELETE("/profiles/:name", apiProfilesDelete)
-	}
-	metadata := router.Group("/metadata/2009-04-04/meta-data")
-	{
-		metadata.GET("/instance-id", func(c *gin.Context) {
-			fmt.Println(c.Request)
-			c.JSON(200, "fairsnail2")
-		})
-		metadata.GET("/", func(c *gin.Context) {
-			fmt.Println(c.Request)
-			c.JSON(200, "ok")
-		})
-	}
-	*/
 	return router
 }
